@@ -44,9 +44,18 @@ internal class AdbDebuggingHook(
             .getDeclaredMethod("get", String::class.java)
             .apply { isAccessible = true }
 
+        val firstAdbHit = AtomicBoolean(false)
         module.hook(handleMessage)
             .setExceptionMode(ExceptionMode.PROTECTIVE)
             .intercept { chain ->
+                val firstHit = firstAdbHit.compareAndSet(false, true)
+                if (firstHit) {
+                    module.log(
+                        Log.INFO,
+                        TAG,
+                        "hook entered: ${handleMessage.declaringClass.name}#handleMessage",
+                    )
+                }
                 val result = chain.proceed()
                 updateAfterSystemHandler(
                     handler = chain.thisObject,
@@ -54,14 +63,24 @@ internal class AdbDebuggingHook(
                     outerManager = outerManager,
                     usbKeys = usbKeys,
                     state = state,
+                    firstHit = firstHit,
                 )
                 result
             }
 
         usbHandleMessages.forEach { handleUsbMessage ->
+            val firstUsbHit = AtomicBoolean(false)
             module.hook(handleUsbMessage)
                 .setExceptionMode(ExceptionMode.PROTECTIVE)
                 .intercept { chain ->
+                    val firstHit = firstUsbHit.compareAndSet(false, true)
+                    if (firstHit) {
+                        module.log(
+                            Log.INFO,
+                            TAG,
+                            "hook entered: ${handleUsbMessage.declaringClass.name}#handleMessage",
+                        )
+                    }
                     val result = chain.proceed()
                     updateAfterUsbHandler(
                         handler = chain.thisObject,
@@ -69,6 +88,7 @@ internal class AdbDebuggingHook(
                         usbConfigured = usbConfigured,
                         getSystemProperty = getSystemProperty,
                         state = state,
+                        firstHit = firstHit,
                     )
                     result
                 }
@@ -81,13 +101,20 @@ internal class AdbDebuggingHook(
         outerManager: Field,
         usbKeys: Field,
         state: AdbConnectionState,
+        firstHit: Boolean,
     ) {
         runCatching {
             // 系统原 Handler 已完成集合增删，此处只读取数量，绝不记录密钥内容。
             val manager = outerManager.get(handler)
             val usbCount = (usbKeys.get(manager) as Map<*, *>).size
-            usbKeyCount.set(usbCount)
+            val previousUsb = usbKeyCount.getAndSet(usbCount)
+            val previousWifi = wirelessConnections.connectionCount()
             updateWirelessConnections(message)
+            val wifi = wirelessConnections.connectionCount()
+            // 分量变化也记录：总状态一直为 false 时仍可区分认证事件和 USB 状态是否到达。
+            if (firstHit || previousUsb != usbCount || previousWifi != wifi) {
+                module.log(Log.INFO, TAG, "ADB state: what=${message.what}, usb=$usbCount, wifi=$wifi")
+            }
             publishState(state)
         }.onFailure { error ->
             module.log(Log.ERROR, TAG, "failed to read ADB connection state", error)
@@ -114,15 +141,23 @@ internal class AdbDebuggingHook(
         usbConfigured: Field,
         getSystemProperty: Method,
         state: AdbConnectionState,
+        firstHit: Boolean,
     ) {
         runCatching {
             val usbState = getSystemProperty.invoke(null, USB_STATE_PROPERTY) as String
             val adbFunctionEnabled = usbState.split(',').any { function -> function == "adb" }
-            val available =
-                usbConnected.getBoolean(handler) &&
-                    usbConfigured.getBoolean(handler) &&
-                    adbFunctionEnabled
-            usbTransportConnected.set(available)
+            val connected = usbConnected.getBoolean(handler)
+            val configured = usbConfigured.getBoolean(handler)
+            val available = connected && configured && adbFunctionEnabled
+            val previous = usbTransportConnected.getAndSet(available)
+            if (firstHit || previous != available) {
+                module.log(
+                    Log.INFO,
+                    TAG,
+                    "USB state: connected=$connected, configured=$configured, " +
+                        "adbFunction=$adbFunctionEnabled, available=$available",
+                )
+            }
             publishState(state)
         }.onFailure { error ->
             module.log(Log.ERROR, TAG, "failed to read USB transport state", error)

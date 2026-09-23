@@ -11,3 +11,9 @@
 ```
 
 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。
+
+## Hook 诊断
+
+LSPosed 日志会逐项记录调用者的反优化结果、每个 hook 首次进入，以及 ADB/USB 状态变化。`ADB keep-awake applied` 表示电源判断首次实际改变了返回值。更新模块后需重启才能加载新代码。
+
+全部 hook 点的调用链、反优化范围和真机验证步骤见 [反优化检查](docs/hook-deoptimization-audit.md)。

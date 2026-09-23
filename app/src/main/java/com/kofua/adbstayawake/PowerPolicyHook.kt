@@ -5,6 +5,7 @@ import android.util.Log
 import io.github.libxposed.api.XposedInterface.ExceptionMode
 import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Method
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 internal class PowerPolicyHook(
@@ -29,10 +30,6 @@ internal class PowerPolicyHook(
         val keptFromInattentiveSleep = serviceClass.getDeclaredMethod(
             "isBeingKeptFromInattentiveSleepLocked",
         )
-        val isItBedTime = serviceClass.getDeclaredMethod(
-            "isItBedTimeYetLocked",
-            powerGroupClass,
-        )
         userActivityInternal = serviceClass.getDeclaredMethod(
             "userActivityInternal",
             Int::class.javaPrimitiveType,
@@ -45,19 +42,36 @@ internal class PowerPolicyHook(
             "isMaximumScreenOffTimeoutFromDeviceAdminEnforcedLocked",
         ).apply { isAccessible = true }
 
-        if (!module.deoptimize(isItBedTime)) {
-            module.log(Log.WARN, TAG, "isItBedTimeYetLocked deoptimize returned false")
-        }
-
         installBootPhaseHook(onBootPhase, isAdbConnected)
         installDecisionHook(keptAwake, isAdbConnected)
         installDecisionHook(keptFromInattentiveSleep, isAdbConnected)
+
+        val deoptimizer = HookDeoptimizer(module, classLoader)
+        // 只反优化被 hook 的小方法或中间方法，无法清除上层调用者中已有的内联副本。
+        // 覆盖普通超时、梦境、注意力超时的调用者，并延伸到电源状态更新入口。
+        deoptimizer.deoptimizeCallers(
+            POWER_MANAGER_SERVICE,
+            "isItBedTimeYetLocked",
+            "updateWakefulnessLocked",
+            "updatePowerStateLocked",
+            "canDreamLocked",
+            "handleSandman",
+            "updateAttentiveStateLocked",
+            "maybeHideInattentiveSleepWarningLocked",
+            "onDreamSuppressionChangedLocked",
+        )
+        // 服务实例依赖 onBootPhase 捕获，保护其启动阶段的实际分发入口。
+        deoptimizer.deoptimizeCallers("com.android.server.SystemServiceManager", "startBootPhase")
     }
 
     private fun installBootPhaseHook(method: Method, isAdbConnected: () -> Boolean) {
+        val firstHit = AtomicBoolean(false)
         module.hook(method)
             .setExceptionMode(ExceptionMode.PROTECTIVE)
             .intercept { chain ->
+                if (firstHit.compareAndSet(false, true)) {
+                    module.log(Log.INFO, TAG, "hook entered: ${method.name}, phase=${chain.args[0]}")
+                }
                 val result = chain.proceed()
                 powerManagerService.set(chain.thisObject)
                 if (isAdbConnected()) onAdbConnectionChanged(true)
@@ -66,17 +80,27 @@ internal class PowerPolicyHook(
     }
 
     private fun installDecisionHook(method: Method, isAdbConnected: () -> Boolean) {
+        val firstHit = AtomicBoolean(false)
+        val firstOverride = AtomicBoolean(false)
         module.hook(method)
             .setExceptionMode(ExceptionMode.PROTECTIVE)
             .intercept { chain ->
+                if (firstHit.compareAndSet(false, true)) {
+                    module.log(Log.INFO, TAG, "hook entered: ${method.name}")
+                }
                 val original = chain.proceed() as Boolean
                 runCatching {
                     val adminEnforced = adminTimeoutEnforced.invoke(chain.thisObject) as Boolean
-                    PowerPolicyDecision.shouldKeepAwake(
+                    val connected = isAdbConnected()
+                    val result = PowerPolicyDecision.shouldKeepAwake(
                         original = original,
-                        adbConnected = isAdbConnected(),
+                        adbConnected = connected,
                         adminTimeoutEnforced = adminEnforced,
                     )
+                    if (!original && result && firstOverride.compareAndSet(false, true)) {
+                        module.log(Log.INFO, TAG, "ADB keep-awake applied: ${method.name}")
+                    }
+                    result
                 }.getOrElse { error ->
                     module.log(
                         Log.ERROR,
