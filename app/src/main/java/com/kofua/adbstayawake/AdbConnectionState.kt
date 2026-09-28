@@ -8,11 +8,11 @@ internal class AdbConnectionState(
     private val connected = AtomicBoolean(false)
 
     fun update(
-        usbConnections: Int,
         wifiConnections: Int,
         usbTransportConnected: Boolean,
     ): Boolean {
-        val next = (usbTransportConnected && usbConnections > 0) || wifiConnections > 0
+        // 免授权 ADB 可能没有认证密钥记录；USB 以已配置且启用 ADB 的传输状态为准。
+        val next = usbTransportConnected || wifiConnections > 0
         val previous = connected.getAndSet(next)
         if (previous != next) onChanged(next)
         return next

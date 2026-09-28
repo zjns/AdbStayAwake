@@ -170,7 +170,6 @@ internal class AdbDebuggingHook(
         val wifi = wirelessConnections.connectionCount()
         val usbTransport = usbTransportConnected.get()
         val after = state.update(
-            usbConnections = usb,
             wifiConnections = wifi,
             usbTransportConnected = usbTransport,
         )

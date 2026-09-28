@@ -84,3 +84,23 @@ Looper.loop → Looper.loopOnce → Handler.dispatchMessage
 回归测试直接执行 `PowerPolicyHook` 的安装及两类决策回调，覆盖旧结构、新结构、动态管理限制、ADB 断开和策略调用异常。修复前旧结构通过，3 项新结构测试因相同的 `NoSuchMethodException` 失败；修复后全部 21 项 JVM 单测、`lintDebug`、`assembleDebug`、`assembleRelease` 通过。Lint 为 0 错误、11 条警告，涉及私有 API、目标版本、构建工具版本及备份配置；Release APK 签名校验通过。
 
 已核对真机系统结构，尚未安装此次 APK 或重启设备。重启后应看到 `admin timeout policy: com.android.server.power.ScreenTimeoutConstants`、`PowerManager hooks installed` 及 `ADB keep-awake applied`。仍需按上面的真机验收步骤确认实际保活、手动熄屏和断连恢复超时。
+
+## ADB Root 下的 USB 连接判断（2026-09-28）
+
+后续安装和软重启验证发现，电源 hook 安装成功不等于保活生效。PID 3405 的进程曾记录 `usb=1` 并在无操作 91 秒后仍保活，但 PID 30837 的进程一直是 `usb=0`，设置 15 秒超时后正常进入了超时休眠。
+
+临时诊断版在 ADB Handler 自身线程读取系统集合，得到 `ADB snapshot: systemUsb=0, cachedUsb=0, transport=true`，确认不是模块漏读已有的连接记录。设备上 KernelSU 的 `adb_root` 功能为开启状态，adbd 加载了 `libadbroot.so`；用户也确认启用了 ADB Root／免授权模式。这一设备环境中，认证集合为空不能代表 USB ADB 不可用。后续另一次启动又出现 `usb=1`，因此不将“开启 ADB Root”与“认证集合必然为空”画等号。
+
+经用户确认，USB 改为以 `connected && configured && adbFunctionEnabled` 为准，不再要求认证集合非空。这也意味着连接电脑并启用 USB 调试后，即使没有运行 adb 命令也保活。无线 ADB 仍依赖活跃连接；USB 不可用且没有无线连接时恢复超时。临时诊断 hook 和逐事件日志已移除，没有修改 KernelSU 设置，也没有扩大公共消息分发的反优化范围。
+
+原实现下，USB 无认证记录及认证记录消失两项回归测试失败；修改后全部 22 项 JVM 单测通过，`lintDebug` 为 0 错误、11 条警告，Debug/Release 构建通过。
+
+正式修复版已安装，等待 20 秒后软重启，验证进程为 PID 20248。屏幕超时保留为 15000 ms，KernelSU ADB Root 保持开启：
+
+- 启动日志出现 `connected=true, usb=0, usbTransport=true, wifi=0`，证明 USB 保活不再依赖认证记录。随后另有认证事件将 `usb` 更新为 1。
+- 日志出现 `ADB keep-awake applied: isBeingKeptAwakeLocked`；无操作约 25 秒时仍为 `Awake`，且 `mStayOn=false`、`userActivitySummary=0x4`，不是充电常亮或尚未达到超时。
+- 临时关闭 USB 调试后，日志转为 `connected=false`。最后用户活动时间为 147349123，休眠时间为 147364137，相差 15014 ms，休眠原因为 `timeout`，状态为 `Dozing`。
+- 自动恢复 USB 调试及 ADB 连接 8 秒后仍为 `Dozing`，未主动点亮屏幕。
+- ADB 连接期间发送电源键事件，采样得到 `Dozing` 和 `power_button`，手动熄屏仍生效。
+
+验证结束时 USB 调试已恢复开启，超时仍为 15 秒，ADB Root 未改动。本轮未进行无线 ADB 真机验证。
