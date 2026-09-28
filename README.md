@@ -16,4 +16,6 @@ Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。
 
 LSPosed 日志会逐项记录调用者的反优化结果、每个 hook 首次进入，以及 ADB/USB 状态变化。`ADB keep-awake applied` 表示电源判断首次实际改变了返回值。更新模块后需重启才能加载新代码。
 
+Android 17 的部分系统将设备管理超时判断移入 `ScreenTimeoutConstants`。模块按实际类结构兼容旧版 `PowerManagerService` 和新版 `mScreenTimeoutConstants`，日志中的 `admin timeout policy` 会显示最终使用的策略类。仍然遵守设备管理超时限制；读取失败时保留系统原判断。
+
 全部 hook 点的调用链、反优化范围和真机验证步骤见 [反优化检查](docs/hook-deoptimization-audit.md)。

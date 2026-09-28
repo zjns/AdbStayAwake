@@ -4,6 +4,7 @@ import android.os.SystemClock
 import android.util.Log
 import io.github.libxposed.api.XposedInterface.ExceptionMode
 import io.github.libxposed.api.XposedModule
+import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -15,6 +16,7 @@ internal class PowerPolicyHook(
     private val powerManagerService = AtomicReference<Any?>()
     private lateinit var userActivityInternal: Method
     private lateinit var adminTimeoutEnforced: Method
+    private var adminTimeoutOwnerField: Field? = null
 
     fun install(isAdbConnected: () -> Boolean) {
         val serviceClass = classLoader.loadClass(POWER_MANAGER_SERVICE)
@@ -38,9 +40,17 @@ internal class PowerPolicyHook(
             Int::class.javaPrimitiveType,
             Int::class.javaPrimitiveType,
         ).apply { isAccessible = true }
-        adminTimeoutEnforced = serviceClass.getDeclaredMethod(
-            "isMaximumScreenOffTimeoutFromDeviceAdminEnforcedLocked",
-        ).apply { isAccessible = true }
+        val adminTimeoutMethodName = "isMaximumScreenOffTimeoutFromDeviceAdminEnforcedLocked"
+        adminTimeoutEnforced = try {
+            serviceClass.getDeclaredMethod(adminTimeoutMethodName)
+        } catch (_: NoSuchMethodException) {
+            // Android 17 的超时策略迁入 ScreenTimeoutConstants；按结构探测以兼容 ROM 回移。
+            val ownerField = serviceClass.getDeclaredField("mScreenTimeoutConstants")
+                .apply { isAccessible = true }
+            adminTimeoutOwnerField = ownerField
+            ownerField.type.getDeclaredMethod(adminTimeoutMethodName)
+        }.apply { isAccessible = true }
+        module.log(Log.INFO, TAG, "admin timeout policy: ${adminTimeoutEnforced.declaringClass.name}")
 
         installBootPhaseHook(onBootPhase, isAdbConnected)
         installDecisionHook(keptAwake, isAdbConnected)
@@ -90,7 +100,10 @@ internal class PowerPolicyHook(
                 }
                 val original = chain.proceed() as Boolean
                 runCatching {
-                    val adminEnforced = adminTimeoutEnforced.invoke(chain.thisObject) as Boolean
+                    // 在原 Locked 调用链内读取当前策略，不能缓存可能变化的管理限制结果。
+                    val ownerField = adminTimeoutOwnerField
+                    val owner = if (ownerField == null) chain.thisObject else ownerField.get(chain.thisObject)
+                    val adminEnforced = adminTimeoutEnforced.invoke(owner) as Boolean
                     val connected = isAdbConnected()
                     val result = PowerPolicyDecision.shouldKeepAwake(
                         original = original,

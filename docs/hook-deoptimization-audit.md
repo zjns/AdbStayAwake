@@ -72,3 +72,15 @@ Looper.loop → Looper.loopOnce → Handler.dispatchMessage
 本地验证结果：17 项 JVM 单测全部通过，`lintDebug`、`assembleDebug`、`assembleRelease` 通过。Debug/Release APK 的实际模块入口、`scope.list=system` 均已核对，未打入 libxposed/JUnit 实现类。Release 签名与设备现有安装包一致，可覆盖安装。
 
 截至本次代码提交，未安装新包或重启设备，真机验收待执行。
+
+## Android 17 兼容修复（2026-09-28）
+
+从 PKX110 真机读取到 Android 17 / API 37，构建版本 `PKX110_17.0.0.100(CN01)`。本次 `services.jar` 的 SHA-256 为 `25401d2c9f961049a26dbc32db7c7e73ff1487ad793e08f499070502148d3918`。
+
+反编译确认 `isMaximumScreenOffTimeoutFromDeviceAdminEnforcedLocked()` 已从 `PowerManagerService` 移至 `com.android.server.power.ScreenTimeoutConstants`，由服务的 `mScreenTimeoutConstants` 字段持有。系统自己的 `updateStayOnLocked` 和 `getScreenOffTimeoutLocked` 也经这个字段调用。原模块在安装任何电源 hook 前解析旧位置，因而方法缺失会中止整组电源 hook 的安装。两个保活判断、`onBootPhase(int)` 和 `userActivityInternal(int,long,int,int,int)` 的签名仍符合原实现。
+
+修复优先解析旧位置，仅遇到 `NoSuchMethodException` 时尝试委托对象；按结构探测，不硬编码 SDK 分界。反射信息在安装时解析，每次判断在原 Locked 调用链内读取当前对象的策略，继续遵守设备管理限制。若两种结构均不支持，仍明确报告安装失败；运行时策略读取异常仍保留原结果，不将“读取失败”视为“无限制”。
+
+回归测试直接执行 `PowerPolicyHook` 的安装及两类决策回调，覆盖旧结构、新结构、动态管理限制、ADB 断开和策略调用异常。修复前旧结构通过，3 项新结构测试因相同的 `NoSuchMethodException` 失败；修复后全部 21 项 JVM 单测、`lintDebug`、`assembleDebug`、`assembleRelease` 通过。Lint 为 0 错误、11 条警告，涉及私有 API、目标版本、构建工具版本及备份配置；Release APK 签名校验通过。
+
+已核对真机系统结构，尚未安装此次 APK 或重启设备。重启后应看到 `admin timeout policy: com.android.server.power.ScreenTimeoutConstants`、`PowerManager hooks installed` 及 `ADB keep-awake applied`。仍需按上面的真机验收步骤确认实际保活、手动熄屏和断连恢复超时。
