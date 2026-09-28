@@ -4,8 +4,9 @@
 
     <application
         android:allowBackup="false"
+        android:description="@string/app_description"
         android:hasCode="true"
-        android:label="ADB Stay Awake"
+        android:label="@string/app_name"
         tools:ignore="MissingApplicationIcon" />
 
 </manifest>

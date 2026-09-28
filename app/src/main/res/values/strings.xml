@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ADB Stay Awake</string>
+    <string name="app_description">Keep your device awake while debugging Android apps over USB or wireless ADB. Normal charging follows the system screen timeout. Supports ADB Root and manual screen-off with the power button.</string>
+</resources>
