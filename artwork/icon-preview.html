@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>ADB Stay Awake icon preview</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: #f3f5f8; color: #273449; font: 16px system-ui, sans-serif; }
+main { width: 1080px; padding: 36px 32px; }
+h1 { margin: 0 0 8px; font-size: 25px; }
+p { margin: 0 0 32px; color: #627085; }
+.grid { display: flex; justify-content: space-between; }
+section { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.icon { position: relative; width: 210px; height: 210px; overflow: hidden; border-radius: 24%; isolation: isolate; }
+.icon::before { content: ''; position: absolute; inset: -25%; background: linear-gradient(#1d3556, #030d1f); }
+.mark { position: absolute; left: 5%; top: .5%; width: 90%; height: 90%; object-fit: fill; }
+.circle { border-radius: 50%; }
+.squircle { border-radius: 32%; }
+.themed::before { background: #d2e8e0; }
+.themed .mark { background: #183d34; mask: url('../app/src/main/res/drawable-nodpi/ic_launcher_mark.png') center / 100% 100% no-repeat; }
+.small { width: 48px; height: 48px; }
+label { font-weight: 600; }
+</style>
+<main>
+<h1>ADB Stay Awake · Terminal Sunrise</h1>
+<p>Mask previews · 48 px samples below · Android adaptive foreground and background proportions</p>
+<div class="grid">
+<section><div class="icon circle"><img class="mark" src="../app/src/main/res/drawable-nodpi/ic_launcher_mark.png"></div><label>Circle</label><div class="icon circle small"><img class="mark" src="../app/src/main/res/drawable-nodpi/ic_launcher_mark.png"></div></section>
+<section><div class="icon"><img class="mark" src="../app/src/main/res/drawable-nodpi/ic_launcher_mark.png"></div><label>Rounded square</label><div class="icon small"><img class="mark" src="../app/src/main/res/drawable-nodpi/ic_launcher_mark.png"></div></section>
+<section><div class="icon squircle"><img class="mark" src="../app/src/main/res/drawable-nodpi/ic_launcher_mark.png"></div><label>Soft square</label><div class="icon squircle small"><img class="mark" src="../app/src/main/res/drawable-nodpi/ic_launcher_mark.png"></div></section>
+<section><div class="icon circle themed"><span class="mark"></span></div><label>Themed icon</label><div class="icon circle themed small"><span class="mark"></span></div></section>
+</div>
+</main>
+</html>

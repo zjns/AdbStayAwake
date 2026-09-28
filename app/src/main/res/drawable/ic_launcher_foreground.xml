@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 百分比留白随图标尺寸缩放，将主体置于自适应图标安全区域内。 -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="20%"
+    android:insetRight="20%"
+    android:insetTop="17%"
+    android:insetBottom="23%">
+    <bitmap
+        android:src="@drawable/ic_launcher_mark"
+        android:gravity="fill"
+        android:filter="true" />
+</inset>
