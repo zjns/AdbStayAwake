@@ -25,6 +25,13 @@ class AdbStayAwakeModule : XposedModule() {
             .onFailure { error ->
                 log(Log.ERROR, TAG, "ADB connection hook installation failed", error)
             }
+
+        // 传统 TCP 监测独立安装：系统 ADB/USB hook 安装失败时仍可尝试这条检测路径。
+        runCatching { LegacyTcpDebuggingHook(this, param.classLoader).install(connectionState) }
+            .onSuccess { log(Log.INFO, TAG, "Legacy ADB TCP monitor installed") }
+            .onFailure { error ->
+                log(Log.ERROR, TAG, "Legacy ADB TCP monitor installation failed", error)
+            }
     }
 
     private companion object {

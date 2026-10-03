@@ -104,3 +104,19 @@ Looper.loop → Looper.loopOnce → Handler.dispatchMessage
 - ADB 连接期间发送电源键事件，采样得到 `Dozing` 和 `power_button`，手动熄屏仍生效。
 
 验证结束时 USB 调试已恢复开启，超时仍为 15 秒，ADB Root 未改动。本轮未进行无线 ADB 真机验证。
+
+## 传统 TCP/IP ADB 连接检测（2026-10-03）
+
+现有无线计数只处理 `MSG_WIFI_DEVICE_CONNECTED` / `MSG_WIFI_DEVICE_DISCONNECTED`（22/23）。[AOSP AdbDebuggingManager](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/adb/AdbDebuggingManager.java) 将传统认证的 CK/DC 消息交给通用连接事件；原模块读取的 `mConnectedKeys` 数量仅用于诊断，不参与保活。免授权 adbd 还可能缺少认证事件，因此仅将通用密钥数量加入判断不能覆盖所有传统连接。
+
+本次增加独立的两秒定期查询，在安装时立即扫描，不依赖 USB 或认证 Handler 触发。端口优先取 `service.adb.tcp.port`，仅为空时回退 `persist.adb.tcp.port`；关闭值或无效值不回退。通过 Linux `NETLINK_INET_DIAG` 查询 IPv4/IPv6 的 LISTEN、ESTABLISHED socket，只认可配置端口上 root/shell UID 的监听端及同 UID 的已建立连接。仅监听、不相关端口、应用 UID 和关闭中的 socket 不触发保活。此判断表示 TCP 传输已建立，不验证 ADB 协议授权状态。USB、配对无线及传统 TCP 三个分量在同步状态更新中合并，断开其中一个不会清除其他分量。
+
+该真机当时已通过 `192.168.0.101:5555` 连接，`service.adb.tcp.port=5555`，配对无线调试为关闭状态。IPv6 socket 表中同时存在 5555 的 LISTEN 和 ESTABLISHED，UID 为 0。查询实际 SELinux 策略发现 `system_server` 对 `proc_net_tcp_udp:file` 没有读取权限，对 `netlink_tcpdiag_socket` 则允许创建、连接、读写、设置选项及诊断请求。因而没有采用 `/proc/net/tcp` 轮询，也没有修改 SELinux 策略。
+
+Netlink 读取在后台线程执行，每个地址族设置 500 ms 收发超时，并限制整次 dump 的读取期限；截断、内核错误及中断的 dump 均拒绝使用。异常清除传统 TCP 状态并仅在首次失败时记录错误，下一轮继续尝试；不记录密钥、IP 地址或其他 socket 明细。正常断连通常在约两秒内识别，异常网络中断取决于内核关闭连接的时机。
+
+`Os.connect(SocketAddress)`、`Os.setsockoptTimeval`、`StructTimeval.fromMillis` 在 [Android 8 libcore](https://android.googlesource.com/platform/libcore/+/refs/tags/android-8.0.0_r1/luni/src/main/java/android/system/) 中已有定义，API 29 才公开；仅对这个系统进程调用方法限定豁免 NewApi 检查。旧版未暴露的 `SOCK_CLOEXEC` 使用 Linux 固定值，未提高 minSdk。
+
+新增 9 项 JVM 回归测试；修复前的接口占位实现有 7 项失败，修复后全项目 31 项通过。`lintDebug` 为 0 错误，Debug/Release 构建通过。另将 Debug APK 作为独立 `app_process` 诊断进程的 classpath，直接执行正式 `TcpSocketReader` 和连接判定：`legacy5555=true, unrelatedPort=false, elapsedMs=5`。诊断进程运行在现有 root ADB 上下文中，此结果验证真机内核接口与正式解析逻辑，不等价于已加载模块在 `system_server` 中的保活验收。
+
+本轮未覆盖安装模块或重启手机。安装新 APK 并重启后，应看到 `Legacy ADB TCP monitor installed` 和 `TCP state: port=5555, available=true`。拔掉 USB，仅保留传统 TCP 连接时，应超过屏幕超时仍保持唤醒；断开最后一个客户端但保留端口监听后，应恢复超时。还需验证重新连接、自定义端口、免授权模式，以及手动电源键熄屏。
